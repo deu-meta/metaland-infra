@@ -103,9 +103,9 @@ services:
     #expose: [8000]
     labels:
       - traefik.enable=true
-      - traefik.http.routers.registry.entrypoints=https
-      - traefik.http.routers.registry.rule=Host(`registry.${DOMAIN}`)
-      - traefik.http.services.registry.loadbalancer.server.port=8000
+      - traefik.http.routers.my-backend.entrypoints=https
+      - traefik.http.routers.my-backend.rule=Host(`my-backend.${DOMAIN}`)
+      - traefik.http.services.my-backend.loadbalancer.server.port=8000
       # 접근 제한이 필요하다면 아래 주석을 해제하여 Basic Authentication을 적용합니다.
-      #- traefik.http.routers.registry.middlewares=admin-auth
+      #- traefik.http.routers.my-backend.middlewares=admin-auth
 ```
