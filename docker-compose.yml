@@ -1,0 +1,169 @@
+version: "3.5"
+services:
+  # ----------------------------------------------------------
+  # traefik :: 리버스 프록시
+  #
+  # 뒷 단(Back-end)에 있는 웹 서버들의 출입을 관리하는 역할을 한다.
+  # Host 헤더를 읽어 매칭되는 서버로 연결시켜준다.
+  #
+  # 또한 let's encrypt와의 연동을 통해 https 인증서를 자동 발급, 갱신해준다.
+  #
+  # 환경변수에 대한 문서
+  # https://doc.traefik.io/traefik/reference/static-configuration/env/
+  # ----------------------------------------------------------
+  traefik:
+    container_name: traefik
+    image: traefik
+    restart: unless-stopped
+    networks: [metaland-net]
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
+    environment:
+      # API 및 Dashboard 활성화 옵션
+      #
+      # TRAEFIK_API: Enable api/dashboard. (Default: false)
+      # TRAEFIK_API_INSECURE: Activate API directly on the entryPoint named traefik. (Default: false)
+      - TRAEFIK_API=true
+      - TRAEFIK_API_INSECURE=true
+
+      # Provider 설정 옵션.
+      #
+      # Docker를 true로 설정할 시 Docker 컨테이너를 스캔
+      - TRAEFIK_PROVIDERS_DOCKER=true
+      - TRAEFIK_PROVIDERS_DOCKER_EXPOSEDBYDEFAULT=false
+      - TRAEFIK_LOG_LEVEL=INFO
+
+      # Entrypoint 설정
+      #
+      # TRAEFIK_ENTRYPOINTS_<NAME>: Entry points definition. (Default: false)
+      # TRAEFIK_ENTRYPOINTS_<NAME>_ADDRESS: Entry point address.
+      # TRAEFIK_ENTRYPOINTS_<NAME>_HTTP_TLS: Default TLS configuration for the routers linked to the entry point. (Default: false)
+      # TRAEFIK_ENTRYPOINTS_<NAME>_HTTP_TLS_CERTRESOLVER: Default certificate resolver for the routers linked to the entry point.
+      # TRAEFIK_ENTRYPOINTS_<NAME>_HTTP_REDIRECTIONS_ENTRYPOINT_PERMANENT: Applies a permanent redirection. (Default: true)
+      # TRAEFIK_ENTRYPOINTS_<NAME>_HTTP_REDIRECTIONS_ENTRYPOINT_SCHEME: Scheme used for the redirection. (Default: https)
+      # TRAEFIK_ENTRYPOINTS_<NAME>_HTTP_REDIRECTIONS_ENTRYPOINT_TO: Targeted entry point of the redirection.
+      - TRAEFIK_ENTRYPOINTS_HTTP=true
+      - TRAEFIK_ENTRYPOINTS_HTTP_ADDRESS=:80
+      - TRAEFIK_ENTRYPOINTS_HTTP_HTTP_REDIRECTIONS_ENTRYPOINT_PERMANENT=true
+      - TRAEFIK_ENTRYPOINTS_HTTP_HTTP_REDIRECTIONS_ENTRYPOINT_SCHEME=https
+      - TRAEFIK_ENTRYPOINTS_HTTP_HTTP_REDIRECTIONS_ENTRYPOINT_TO=https
+
+      - TRAEFIK_ENTRYPOINTS_HTTPS=true
+      - TRAEFIK_ENTRYPOINTS_HTTPS_ADDRESS=:443
+      - TRAEFIK_ENTRYPOINTS_HTTPS_HTTP_TLS=true
+      - TRAEFIK_ENTRYPOINTS_HTTPS_HTTP_TLS_CERTRESOLVER=letsencrypt
+
+      # Entrypoint의 Certificate 설정
+      # letsencrypt에서 자동으로 인증서를 발급받으며, 자동으로 갱신되는 기능도 수행한다.
+      #
+      # TRAEFIK_CERTIFICATESRESOLVERS_<NAME>: Certificates resolvers configuration. (Default: false)
+      # TRAEFIK_CERTIFICATESRESOLVERS_<NAME>_ACME_CERTIFICATESDURATION: Certificates' duration in hours. (Default: 2160)
+      # TRAEFIK_CERTIFICATESRESOLVERS_<NAME>_ACME_EMAIL: Email address used for registration.
+      # TRAEFIK_CERTIFICATESRESOLVERS_<NAME>_ACME_STORAGE: Storage to use. (Default: acme.json)
+      # TRAEFIK_CERTIFICATESRESOLVERS_<NAME>_ACME_HTTPCHALLENGE: Activate HTTP-01 Challenge. (Default: false)
+      # TRAEFIK_CERTIFICATESRESOLVERS_<NAME>_ACME_HTTPCHALLENGE_ENTRYPOINT: HTTP challenge EntryPoint
+      # TRAEFIK_CERTIFICATESRESOLVERS_<NAME>_ACME_DNSCHALLENGE: Activate DNS-01 Challenge. (Default: false)
+      # TRAEFIK_CERTIFICATESRESOLVERS_<NAME>_ACME_DNSCHALLENGE_DELAYBEFORECHECK: Assume DNS propagates after a delay in seconds rather than finding and querying nameservers. (Default: 0)
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT=true
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_EMAIL=${LETSENCRYPT_EMAIL}
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_STORAGE=/letsencrypt/acme.json
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_HTTPCHALLENGE=true
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_HTTPCHALLENGE_ENTRYPOINT=http
+    labels:
+      # basic auth definition.
+      # https://doc.traefik.io/traefik/middlewares/http/basicauth/
+      # Declaring the user list
+      #
+      # Note: when used in docker-compose.yml all dollar signs in the hash need to be doubled for escaping.
+      # To create user:password pair, it's possible to use this command:
+      # echo $(htpasswd -nB user) | sed -e s/\\$/\\$\\$/g
+      #
+      # Also note that dollar signs should NOT be doubled when they not evaluated (e.g. Ansible docker_container module).
+      - traefik.http.middlewares.admin-auth.basicauth.users=admin:$$2y$$05$$dt4FEwEZ5g4xN91N/CD03ujCjM7DXooimZUUTuFWSyIIfPwOETC9.
+      # Set the removeHeader option to true to remove the authorization header before forwarding the request to your service. (Default value is false.)
+      #- traefik.http.middlewares.test-auth.basicauth.removeheader=true
+
+      - traefik.enable=true
+      - traefik.http.routers.traefik.entrypoints=https
+      - traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN}`)
+      - traefik.http.routers.traefik.middlewares=admin-auth
+      - traefik.http.services.traefik.loadbalancer.server.port=8080
+
+  # ----------------------------------------------------------
+  # registry :: 프라이빗 도커 이미지 저장소
+  #
+  # 직접 호스팅하는 도커 이미지 허브입니다.
+  # 빌드한 도커 이미지를 여기에 푸시하여 저장할 수 있습니다.
+  # ----------------------------------------------------------
+  registry:
+    container_name: registry
+    image: registry:2
+    restart: unless-stopped
+    networks: [metaland-net]
+    volumes:
+      - ./registry:/var/lib/registry
+    environment:
+      - REGISTRY_HTTP_ADDR=0.0.0.0:5000
+
+  registry-ui:
+    container_name: registry-ui
+    image: joxit/docker-registry-ui:latest
+    restart: unless-stopped
+    networks: [metaland-net]
+    expose: [80]
+    environment:
+      # Remove the menu that show the dialogs to add, remove and change the endpoint of your docker registry. (default false)
+      # If you use only one registry, set this true
+      - SINGLE_REGISTRY=true
+      # Update the default Nginx configuration and set the proxy_pass to your backend docker registry (this avoid CORS configuration).
+      # This is usually the name of your registry container in the form http://registry:5000.
+      - NGINX_PROXY_PASS_URL=http://registry:5000
+      # Set a custom title for your user interface. (default: value derived from REGISTRY_URL).
+      - REGISTRY_TITLE=MetaLand Docker Registry
+      # Set if we can delete images from the UI. (default: false)
+      - DELETE_IMAGES=true
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.registry.entrypoints=https
+      - traefik.http.routers.registry.rule=Host(`registry.${DOMAIN}`)
+      - traefik.http.routers.registry.middlewares=admin-auth
+      - traefik.http.services.registry.loadbalancer.server.port=80
+
+  jenkins:
+    container_name: jenkins
+    image: jenkins/jenkins:lts
+    restart: unless-stopped
+    privileged: true
+    user: root
+    networks: [metaland-net]
+    volumes:
+      - ./jenkins:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /usr/bin/docker:/usr/bin/docker:ro # Add docker binary to use docker command inside of jenkins container.
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.jenkins.entrypoints=https
+      - traefik.http.routers.jenkins.rule=Host(`jenkins.${DOMAIN}`)
+      - traefik.http.routers.jenkins.middlewares=admin-auth
+      - traefik.http.services.jenkins.loadbalancer.server.port=8080
+
+  watchtower:
+    container_name: watchtower
+    image: containrrr/watchtower
+    restart: unless-stopped
+    networks: [metaland-net]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - $HOME/.docker/config.json:/config.json
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=300
+
+networks:
+  metaland-net:
+    external: true
